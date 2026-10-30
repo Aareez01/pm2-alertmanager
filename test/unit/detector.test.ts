@@ -15,23 +15,46 @@ const opts = {
 const autorestartOn: SettledLookup = () => ({ autorestart: true });
 const autorestartOff: SettledLookup = () => ({ autorestart: false });
 
+/**
+ * One full crash-and-restart cycle as PM2 actually emits it: exit(stopping),
+ * exit(stopped), online - then classification settles. Feeding bare exits tests a
+ * sequence PM2 never produces.
+ */
+function crashCycle(d: Detector, t: number, exitCode = 1) {
+  d.ingest(ev({ status: 'stopping', exitCode, at: t }), t);
+  d.ingest(ev({ status: 'stopped', exitCode, at: t }), t);
+  d.ingest(ev({ kind: 'online', at: t + 100 }), t + 100);
+  return d.tick(t + 4_000, autorestartOn);
+}
+
 describe('exit deduplication', () => {
   it('ignores the status=stopping half of every exit pair', () => {
     expect(new Detector(opts).ingest(ev({ status: 'stopping' }), 1000)).toEqual([]);
   });
 
-  it('counts one restart as ONE exit, not two', () => {
-    // Three restarts = six raw exit events. Counting raw exits would trip a threshold
-    // of 3 after only one and a half restarts.
+  it('counts one restart as ONE crash, not two', () => {
+    // Each restart emits two exits. Counting both would trip a threshold of 3 after
+    // only one and a half restarts.
     const d = new Detector(opts);
-    let loops = 0;
-    for (let i = 0; i < 2; i++) {
-      d.ingest(ev({ status: 'stopping' }), 1000 + i * 100);
-      loops += d.ingest(ev({ status: 'stopped' }), 1000 + i * 100)
-        .filter((c) => c.kind === 'crash-loop').length;
+    expect(crashCycle(d, 10_000).map((c) => c.kind)).toEqual(['crash']);
+    expect(crashCycle(d, 20_000).map((c) => c.kind)).toEqual(['crash']);
+    // Third crash, not sixth exit, is what escalates.
+    expect(crashCycle(d, 30_000).map((c) => c.kind)).toEqual(['crash-loop']);
+  });
+
+  it('a requested restart is not a crash and never escalates to a loop', () => {
+    // `pm2 set` restarts a module. A few config changes must not look like an app
+    // dying repeatedly - this produced a false crash-loop page in the lab.
+    const d = new Detector(opts);
+    for (let i = 0; i < 6; i++) {
+      const t = 10_000 + i * 1_000;
+      d.ingest(ev({ status: 'stopped', at: t }), t);
+      d.ingest(ev({ kind: 'online', at: t + 50 }), t + 50);
+      d.ingest(ev({ kind: 'restart', manuallyFlag: true, at: t + 60 }), t + 60);
+      const out = d.tick(t + 4_000, autorestartOn);
+      expect(out.every((c) => c.kind === 'restart')).toBe(true);
     }
-    expect(loops).toBe(0);
-    expect(d.ingest(ev(), 1300).filter((c) => c.kind === 'crash-loop')).toHaveLength(1);
+    expect(d.isInCrashLoop('api', 1)).toBe(false);
   });
 });
 
@@ -108,8 +131,8 @@ describe('crash loops', () => {
   it('reports a crash loop only once while it continues', () => {
     const d = new Detector(opts);
     let loops = 0;
-    for (let i = 0; i < 50; i++) {
-      loops += d.ingest(ev(), 1000 + i).filter((c) => c.kind === 'crash-loop').length;
+    for (let i = 0; i < 20; i++) {
+      loops += crashCycle(d, 10_000 + i * 1_000).filter((c) => c.kind === 'crash-loop').length;
     }
     expect(loops).toBe(1);
   });

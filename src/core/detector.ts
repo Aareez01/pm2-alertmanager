@@ -138,38 +138,64 @@ export class Detector {
     const s = this.get(ev.app, ev.pmId);
     const out: Condition[] = [];
 
+    // Exits are NOT counted here. A crash loop is a loop of CRASHES, and whether this
+    // exit was one is not known yet - `pm2 set` restarts a module, so a handful of
+    // config changes would otherwise look exactly like an app dying repeatedly.
+    s.pending = { at: now, ev, cameBack: false, requestedRestart: false };
+    return out;
+  }
+
+  /**
+   * Count a confirmed crash, escalating once they cluster.
+   *
+   * Returns null while a loop is already being reported: one alert describes the
+   * situation and further ones add nothing.
+   */
+  private recordCrash(
+    s: InstanceState,
+    ev: NormalizedEvent,
+    now: number,
+    detail: Record<string, unknown>,
+  ): Condition | null {
     s.exits.push(now);
     const cutoff = now - this.opts.crashLoopWindowMs;
     while (s.exits.length > 0 && (s.exits[0] as number) < cutoff) s.exits.shift();
 
-    if (s.exits.length >= this.opts.crashLoopThreshold && !s.inCrashLoop) {
+    if (s.inCrashLoop) return null;
+
+    if (s.exits.length >= this.opts.crashLoopThreshold) {
       s.inCrashLoop = true;
-      out.push({
+      return {
         ...this.base(ev),
         kind: 'crash-loop',
         severity: 'critical',
         detail: {
-          exits: s.exits.length,
+          crashes: s.exits.length,
           windowSeconds: Math.round(this.opts.crashLoopWindowMs / 1000),
           firstAt: s.exits[0],
           lastAt: now,
           unstableRestarts: ev.unstableRestarts,
           errLogPath: ev.errLogPath,
         },
-      });
-      s.pending = null;
-      return out;
+      };
     }
+    return { ...this.base(ev), kind: 'crash', severity: 'warning', detail };
+  }
 
-    // Nothing on the exit event itself can tell a stop from a crash, so hold it and let
-    // tick() decide from what follows.
-    s.pending = { at: now, ev, cameBack: false, requestedRestart: false };
-    return out;
+  /** A loop is over once no crash has landed inside the window. */
+  private sweepCrashLoops(now: number): void {
+    const cutoff = now - this.opts.crashLoopWindowMs;
+    for (const s of this.state.values()) {
+      if (!s.inCrashLoop) continue;
+      while (s.exits.length > 0 && (s.exits[0] as number) < cutoff) s.exits.shift();
+      if (s.exits.length < this.opts.crashLoopThreshold) s.inCrashLoop = false;
+    }
   }
 
   private onUp(ev: NormalizedEvent): Condition[] {
     const s = this.get(ev.app, ev.pmId);
-    s.inCrashLoop = false;
+    // Deliberately does NOT clear inCrashLoop: coming back up is what a crash loop IS.
+    // The loop clears when crashes stop arriving (see sweep in tick) or on recovery.
     if (!s.pending) return [];
 
     s.pending.cameBack = true;
@@ -217,6 +243,9 @@ export class Detector {
       }];
     }
     if (p.state === 'recovered') {
+      const s = this.get(ev.app, ev.pmId);
+      s.inCrashLoop = false;
+      s.exits = [];
       return [{ ...this.base(ev), kind: 'recovered', severity: 'info',
         detail: { probe: p.probe, probeKind: p.probe_kind } }];
     }
@@ -232,6 +261,7 @@ export class Detector {
    */
   tick(now: number = Date.now(), lookup?: SettledLookup): Condition[] {
     const out: Condition[] = [];
+    this.sweepCrashLoops(now);
     for (const s of this.state.values()) {
       const p = s.pending;
       if (!p) continue;
@@ -249,10 +279,11 @@ export class Detector {
         }
         if (typeof p.ev.exitCode === 'number' && p.ev.exitCode !== 0) {
           // Died by itself and PM2 brought it back: a crash, however briefly.
-          out.push({ ...this.base(p.ev), kind: 'crash', severity: 'warning', detail: {
+          const c = this.recordCrash(s, p.ev, now, {
             exitCode: p.ev.exitCode, restartTime: p.ev.restartTime,
             unstableRestarts: p.ev.unstableRestarts, errLogPath: p.ev.errLogPath,
-            revision: p.ev.revision } });
+            revision: p.ev.revision });
+          if (c) out.push(c);
           continue;
         }
         out.push({ ...this.base(p.ev), kind: 'restart', severity: 'info',
@@ -266,9 +297,10 @@ export class Detector {
       const settled = lookup ? lookup(p.ev.app, p.ev.pmId) : null;
       if (settled && settled.autorestart === false) {
         // It would never have come back on its own, so staying down proves nothing.
-        out.push({ ...this.base(p.ev), kind: 'crash', severity: 'warning', detail: {
+        const c = this.recordCrash(s, p.ev, now, {
           exitCode: p.ev.exitCode, errLogPath: p.ev.errLogPath,
-          note: 'exited and stayed down with autorestart disabled' } });
+          note: 'exited and stayed down with autorestart disabled' });
+        if (c) out.push(c);
         continue;
       }
 
