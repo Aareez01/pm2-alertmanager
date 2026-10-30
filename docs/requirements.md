@@ -1,4 +1,4 @@
-# pm2-alertmanager — Requirements
+# pm2-alertmanager - Requirements
 
 **Status:** Draft · **Date:** 2026-10-30 · **Repo:** `pm2-alertmanager` (standalone) · **Licence:** MIT
 
@@ -11,7 +11,7 @@ and `pm2-liveness` are bound by them. Read that first.
 ## 1. Problem
 
 PM2's own notifications (email, Slack, webhook) are behind the paid PM2 Plus service. The free
-alternatives — `pm2-slack`, `pm2-restart-notifier`, `pm2-webhook-monitor`, `pm2-alert` — are
+alternatives - `pm2-slack`, `pm2-restart-notifier`, `pm2-webhook-monitor`, `pm2-alert` - are
 single-channel, single-author packages, several unmaintained, and none handle the thing that actually
 matters on-call: **noise**. An app in a crash loop emits an event per restart, and a naive notifier
 turns that into fifty Slack messages at 03:00.
@@ -27,7 +27,7 @@ and resolution notices.
 - Consume both native PM2 events and `pm2-liveness:status` events.
 
 **Non-goals (v1)**
-- On-call scheduling, escalation policies, acknowledgement workflows — that is PagerDuty/Opsgenie's
+- On-call scheduling, escalation policies, acknowledgement workflows - that is PagerDuty/Opsgenie's
   job; we route *to* them.
 - Metrics, dashboards, log shipping.
 - Alerting on anything other than PM2-managed processes.
@@ -36,39 +36,39 @@ and resolution notices.
 
 ### 3.1 Event sources
 
-- **REQ-AM-01** — Subscribe via `pm2.launchBus()` to `process:event` and to `pm2-liveness:status`.
-- **REQ-AM-02** — Per F4 the native vocabulary is `start`, `online`, `exit`, `restart`, and
-  `restart overlimit`. Match `'restart overlimit'` **with the space** — this is the most likely
+- **REQ-AM-01** - Subscribe via `pm2.launchBus()` to `process:event` and to `pm2-liveness:status`.
+- **REQ-AM-02** - Per F4 the native vocabulary is `start`, `online`, `exit`, `restart`, and
+  `restart overlimit`. Match `'restart overlimit'` **with the space** - this is the most likely
   implementation bug in the whole module and must have a dedicated test.
-- **REQ-AM-02a** — Per F4a, **`exit` fires twice per restart** (`status=stopping`, then
-  `status=stopped`). All counting logic MUST deduplicate — count only `status === 'stopped'`, or
+- **REQ-AM-02a** - Per F4a, **`exit` fires twice per restart** (`status=stopping`, then
+  `status=stopped`). All counting logic MUST deduplicate - count only `status === 'stopped'`, or
   dedupe on `(pm_id, status)`. Counting raw `exit` events trips crash-loop detection at half the
   configured threshold. Dedicated test required.
-- **REQ-AM-02b** — Per F4a, the `status` field is the status **at emit time** (the `online` event
+- **REQ-AM-02b** - Per F4a, the `status` field is the status **at emit time** (the `online` event
   carries `status=launching`). MUST NOT be treated as settled state; read settled state from
   `pm2.list()`.
-- **REQ-AM-03** — Derive higher-level conditions rather than expecting native events:
+- **REQ-AM-03** - Derive higher-level conditions rather than expecting native events:
   - **crash** = `exit` with `status === 'stopped'`, non-zero `exit_code`, and no operator action
   - **restart** = native `restart` event, or `exit` followed by `start`/`online` for the same `pm_id`
     within 30 s
   - **crash loop** = `restart overlimit`, or ≥N *deduplicated* exits for one `pm_id` within a window
-- **REQ-AM-03a** — ⚠️ **`manually` MUST NOT be read as "a human did it."** Per F4b it means "PM2 was
-  asked to act", via the API or CLI — a `pm2.restart()` from `pm2-liveness` sets it too.
+- **REQ-AM-03a** - ⚠️ **`manually` MUST NOT be read as "a human did it."** Per F4b it means "PM2 was
+  asked to act", via the API or CLI - a `pm2.restart()` from `pm2-liveness` sets it too.
 
   **It is also always `false` on an exit event** (F4b), so it cannot classify one at all. A revision
   of this requirement that tried to use it for exactly that was inert, and the lab showed no change
-  in behaviour — the third pass at this rule, and the second to be wrong from source reading alone.
+  in behaviour - the third pass at this rule, and the second to be wrong from source reading alone.
 
   **Nothing on the exit event distinguishes a stop from a crash.** What distinguishes them is what
   follows, so an exit is held briefly and classified from the sequence:
 
   | After the exit | Classification |
   | --- | --- |
-  | `restart` event with `manually=true` | **restart** (info) — something asked PM2 to act |
-  | start/online only, non-zero exit code | **crash** (warning) — died and was brought back |
+  | `restart` event with `manually=true` | **restart** (info) - something asked PM2 to act |
+  | start/online only, non-zero exit code | **crash** (warning) - died and was brought back |
   | start/online only, clean exit code | **restart** (info) |
-  | nothing, `autorestart` **on** | **operator-stop** (info) — PM2 would have restarted it |
-  | nothing, `autorestart` **off** | **crash** (warning) — staying down proves nothing |
+  | nothing, `autorestart` **on** | **operator-stop** (info) - PM2 would have restarted it |
+  | nothing, `autorestart` **off** | **crash** (warning) - staying down proves nothing |
 
   `autorestart` never appears on the bus, so the detector takes a lookup backed by `pm2.list()`.
   Classification waits a **settle window** (default 3s) because `restart` arrives just *after*
@@ -82,56 +82,56 @@ and resolution notices.
 
   The invariant: **a process that died on its own always alerts.** A probe-initiated restart is
   reported once, by `probe-fail`, not twice.
-- **REQ-AM-04** — Per F5, the payload is `pm2_env` minus `env`. Any enrichment needing env vars
+- **REQ-AM-04** - Per F5, the payload is `pm2_env` minus `env`. Any enrichment needing env vars
   requires a separate `pm2.list()` call. Do not assume `env` is present.
-- **REQ-AM-05** — **Memory-restart alerts: implemented** (was out of scope). Per F6 there is no bus
+- **REQ-AM-05** - **Memory-restart alerts: implemented** (was out of scope). Per F6 there is no bus
   signal at all, so the module tails PM2's own daemon log for the `max_memory_restart` line, parses
   the pm_id and memory figures, and resolves the app name from `pm2.list()`. Opt-in via
-  `memoryRestarts.enabled`, best-effort by nature — tied to a log string rather than an API, so the
+  `memoryRestarts.enabled`, best-effort by nature - tied to a log string rather than an API, so the
   failure mode is silence, never a wrong alert. Lab scenario 23 verifies it against a real leaking
   app.
-- **REQ-AM-06** — Per C5, operate fully on native events alone when `pm2-liveness` is not installed.
-- **REQ-AM-07** — Per C1, ignore `pm2-liveness:status` events with an unrecognised `v`, logging once per
+- **REQ-AM-06** - Per C5, operate fully on native events alone when `pm2-liveness` is not installed.
+- **REQ-AM-07** - Per C1, ignore `pm2-liveness:status` events with an unrecognised `v`, logging once per
   unknown version.
 
-### 3.2 Noise control — the core of the module
+### 3.2 Noise control - the core of the module
 
-- **REQ-AM-08** — **Deduplication.** An identical alert (same app, same `pm_id`, same condition) within
+- **REQ-AM-08** - **Deduplication.** An identical alert (same app, same `pm_id`, same condition) within
   a dedup window (default 5 min) is suppressed, with a counter incremented on the pending alert.
-- **REQ-AM-09** — **Grouping window.** Events arriving within a group window (default 30 s) are
+- **REQ-AM-09** - **Grouping window.** Events arriving within a group window (default 30 s) are
   collected into one notification rather than sent individually. A 4-instance simultaneous crash is
   one message naming 4 instances.
-- **REQ-AM-10** — **Crash-loop collapse.** On `restart overlimit`, or on N crashes within a window,
+- **REQ-AM-10** - **Crash-loop collapse.** On `restart overlimit`, or on N crashes within a window,
   emit **one** alert describing the loop (count, window, first/last timestamp) and then suppress
   further alerts for that app until it recovers or a long re-notify interval elapses (default 1 h).
 
   *Revised during implementation.* This originally demanded "exactly one" alert in total. The honest
   behaviour is **two**: the first crash is reported immediately as a `warning`, and the escalation to
   a crash loop is reported once as `critical`. Satisfying the literal "exactly one" would mean holding
-  the first crash for a full crash-loop window (default 60 s) before saying anything — delaying the
+  the first crash for a full crash-loop window (default 60 s) before saying anything - delaying the
   notification that matters most in order to win a word count.
 
   The property that actually matters is that the alert count is **bounded and independent of the
   crash count**. That is what is asserted: 50, 200 and 1000 crashes each produce exactly two
   notifications.
-- **REQ-AM-11** — **Flap damping.** An app transitioning healthy↔unhealthy more than N times in a
+- **REQ-AM-11** - **Flap damping.** An app transitioning healthy↔unhealthy more than N times in a
   window is alerted once as "flapping", not once per transition.
-- **REQ-AM-12** — **Startup suppression.** For `startupGraceSeconds` (default 60) after module boot,
+- **REQ-AM-12** - **Startup suppression.** For `startupGraceSeconds` (default 60) after module boot,
   collect but do not send. A PM2 daemon restart otherwise produces a `start`+`online` storm for every
   app. This is essential and easy to forget.
-- **REQ-AM-13** — **Quiet hours.** Per-severity, with timezone. Alerts during quiet hours for
+- **REQ-AM-13** - **Quiet hours.** Per-severity, with timezone. Alerts during quiet hours for
   below-threshold severities are held and summarised at the end of the window, not dropped.
-- **REQ-AM-14** — **Resolution notices.** When a previously-alerted app returns to healthy and stays
+- **REQ-AM-14** - **Resolution notices.** When a previously-alerted app returns to healthy and stays
   so for `resolveAfterSeconds` (default 120), send a "resolved" message. Where the channel supports
   it (Slack), update the original message thread rather than posting a new one.
 
 ### 3.3 Routing and channels
 
-- **REQ-AM-15** — Severity levels: `info`, `warning`, `critical`. Default mapping — manual stop =
+- **REQ-AM-15** - Severity levels: `info`, `warning`, `critical`. Default mapping - manual stop =
   `info` (suppressed by default), single crash = `warning`, crash loop / probe-trip = `critical`.
-- **REQ-AM-16** — Routing rules match on app name (glob), namespace, severity, and condition, and
+- **REQ-AM-16** - Routing rules match on app name (glob), namespace, severity, and condition, and
   select one or more channels. First-match-wins with an explicit default route.
-- **REQ-AM-17** — **v1 channels: Slack, generic webhook, Microsoft Teams, Telegram, PagerDuty,
+- **REQ-AM-17** - **v1 channels: Slack, generic webhook, Microsoft Teams, Telegram, PagerDuty,
   Opsgenie and SMTP.**
 
   *Scope widened on request.* This originally shipped Slack and the generic webhook only, on the
@@ -141,66 +141,66 @@ and resolution notices.
   Two earn their keep beyond convenience: **PagerDuty** uses the alert fingerprint as `dedup_key` and
   **Opsgenie** uses it as the alias, so repeats group into one incident and a resolution notice
   *closes that incident* rather than opening another. **SMTP** keeps `nodemailer` as an optional
-  dependency — nobody should download an SMTP stack to post to Slack.
-- **REQ-AM-18** — Per-channel delivery retry with exponential backoff (3 attempts), and a dead-letter
+  dependency - nobody should download an SMTP stack to post to Slack.
+- **REQ-AM-18** - Per-channel delivery retry with exponential backoff (3 attempts), and a dead-letter
   log. A failed Slack post must never crash the module (NFR-2) and must never block the event loop.
-- **REQ-AM-19** — Rate-limit per channel (default 20 messages/min) with overflow collapsed into a
+- **REQ-AM-19** - Rate-limit per channel (default 20 messages/min) with overflow collapsed into a
   single "N further alerts suppressed" message.
 
 ### 3.4 Alert content
 
-- **REQ-AM-20** — Include: app name, `pm_id`, instance count affected, host, condition, severity,
+- **REQ-AM-20** - Include: app name, `pm_id`, instance count affected, host, condition, severity,
   `restart_time`, `unstable_restarts`, exit code, uptime at failure, and `versioning.revision` where
   present.
-- **REQ-AM-21** — Include the last N lines of stderr (default 15, configurable, capped at 100). Read
-  from `pm_err_log_path` in the payload — **not** by buffering all `log:err` bus traffic, which would
+- **REQ-AM-21** - Include the last N lines of stderr (default 15, configurable, capped at 100). Read
+  from `pm_err_log_path` in the payload - **not** by buffering all `log:err` bus traffic, which would
   cost memory proportional to total log volume (NFR-1).
-- **REQ-AM-22** — **Redaction.** Apply configurable regex redaction to log excerpts before sending,
+- **REQ-AM-22** - **Redaction.** Apply configurable regex redaction to log excerpts before sending,
   with sensible defaults for common secret shapes. Alerts leave the host; this is a security
   requirement, not a nicety.
-- **REQ-AM-23** — Cap total message size per channel (Slack ~40 KB) and truncate the log excerpt
+- **REQ-AM-23** - Cap total message size per channel (Slack ~40 KB) and truncate the log excerpt
   first, never the structured fields.
 
 ### 3.5 Reliability
 
-- **REQ-AM-24** — Per F8 the bus is fire-and-forget. Poll `pm2.list()` every 30 s and reconcile:
+- **REQ-AM-24** - Per F8 the bus is fire-and-forget. Poll `pm2.list()` every 30 s and reconcile:
   if an app is `errored`/`stopped` and no alert is active for it, raise one. This catches events
-  missed while the module was restarting — including the restart caused by its own `pm2 set` (F3).
-- **REQ-AM-25** — Persist alert state (active alerts, dedup counters, suppression windows) to disk,
+  missed while the module was restarting - including the restart caused by its own `pm2 set` (F3).
+- **REQ-AM-25** - Persist alert state (active alerts, dedup counters, suppression windows) to disk,
   atomically, so a module restart does not re-alert everything or lose resolution tracking.
-- **REQ-AM-26** — On boot, reconcile persisted state against live `pm2.list()` before sending
+- **REQ-AM-26** - On boot, reconcile persisted state against live `pm2.list()` before sending
   anything, then apply REQ-AM-12 startup suppression.
-- **REQ-AM-27** — Bounded queues everywhere. Under sustained event flood, drop oldest and record the
+- **REQ-AM-27** - Bounded queues everywhere. Under sustained event flood, drop oldest and record the
   drop count rather than growing unbounded.
 
 ### 3.6 Configuration
 
-- **REQ-AM-28** — Primary channel is module config (`pm2 set pm2-alertmanager:<key>`), with a sidecar
+- **REQ-AM-28** - Primary channel is module config (`pm2 set pm2-alertmanager:<key>`), with a sidecar
   YAML/JSON file for routing rules, which are too structured for flat keys. Same precedence and
   file-watch semantics as REQ-PR-26/27.
-- **REQ-AM-29** — Webhook URLs are secrets. Support `${ENV_VAR}` interpolation so they need not sit in
+- **REQ-AM-29** - Webhook URLs are secrets. Support `${ENV_VAR}` interpolation so they need not sit in
   `module_conf.json`, and redact them from all log output and from `pm2 conf`-style display.
-- **REQ-AM-30** — Boot-time schema validation per NFR-8, naming the offending path.
-- **REQ-AM-31** — `pm2 trigger pm2-alertmanager test-alert` sends a synthetic alert through every
+- **REQ-AM-30** - Boot-time schema validation per NFR-8, naming the offending path.
+- **REQ-AM-31** - `pm2 trigger pm2-alertmanager test-alert` sends a synthetic alert through every
   configured route, for verifying setup without breaking something on purpose.
 
 ### 3.7 Operability
 
-- **REQ-AM-32** — Expose via `pmx.probe()`: events received, alerts sent, alerts suppressed (by
+- **REQ-AM-32** - Expose via `pmx.probe()`: events received, alerts sent, alerts suppressed (by
   reason), delivery failures, active alert count, queue depth.
-- **REQ-AM-33** — Structured JSON logs; every suppression decision logged at `debug` with its reason,
+- **REQ-AM-33** - Structured JSON logs; every suppression decision logged at `debug` with its reason,
   so "why didn't I get paged?" is answerable.
-- **REQ-AM-34** — Ignore events originating from PM2 modules themselves by default
+- **REQ-AM-34** - Ignore events originating from PM2 modules themselves by default
   (`pm2_env.pmx_module === true`), including its own.
 
 ## 4. Acceptance criteria
 
-1. An app crash-looping 50 times in 2 minutes produces **two** alerts — one `crash`, one
-   `crash-loop` escalation — and the same two at 200 and 1000 crashes (REQ-AM-10). Never 50.
+1. An app crash-looping 50 times in 2 minutes produces **two** alerts - one `crash`, one
+   `crash-loop` escalation - and the same two at 200 and 1000 crashes (REQ-AM-10). Never 50.
 2. Restarting the PM2 daemon with 10 apps running produces **zero** alerts (REQ-AM-12).
 3. `pm2 stop api` produces no alert at default settings (lab scenario 21), while an app that dies on
-   its own always does — including when something restarts it through the API straight afterwards.
-4. A `restart overlimit` event is matched — explicit test for the space in the event name.
+   its own always does - including when something restarts it through the API straight afterwards.
+4. A `restart overlimit` event is matched - explicit test for the space in the event name.
 4a. A single restart producing two `exit` events increments the crash counter by **one**, not two
     (REQ-AM-02a).
 4b. A restart issued programmatically by `pm2-liveness` (which arrives with `manually=true`) **does**
@@ -217,7 +217,7 @@ and resolution notices.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Alert storm pages the whole team at 03:00 | Users uninstall immediately; reputational | REQ-AM-08/09/10/11/12/19 — noise control is the product |
+| Alert storm pages the whole team at 03:00 | Users uninstall immediately; reputational | REQ-AM-08/09/10/11/12/19 - noise control is the product |
 | Missed alert due to fire-and-forget bus (F8) | Silent failure; worst possible outcome for an alerting tool | REQ-AM-24 reconciliation loop |
 | Secrets leaked into Slack via log excerpt | Security incident | REQ-AM-22 redaction, on by default |
 | Webhook URL sits in plaintext `module_conf.json` | Credential exposure | REQ-AM-29 env interpolation |
@@ -226,5 +226,5 @@ and resolution notices.
 ## 6. Sequencing note
 
 Build `pm2-liveness` first. `pm2-alertmanager` is independently useful on native events (REQ-AM-06), but
-the demo that sells the suite — a hung process detected, restarted, and alerted — needs both, and the
+the demo that sells the suite - a hung process detected, restarted, and alerted - needs both, and the
 probe is the half that cannot be faked.

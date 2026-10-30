@@ -1,6 +1,6 @@
 # pm2-alertmanager
 
-Self-hosted alerting for PM2 — crash, crash-loop and health-probe alerts to Slack or any
+Self-hosted alerting for PM2 - crash, crash-loop and health-probe alerts to Slack or any
 webhook, **with the noise control on-call actually needs**.
 
 PM2's own notifications are behind the paid PM2 Plus service. The free alternatives are
@@ -26,8 +26,8 @@ Sending a Slack message is the easy part. These are the parts that matter:
 
 | Behaviour | Why |
 | --- | --- |
-| **Crash-loop collapse** | 50 crashes produce 2 notifications (one crash, one escalation), not 50 — and the count stays at 2 for 1000 crashes |
-| **Startup suppression** | A PM2 daemon restart emits `start`+`online` for every app at once. Without a grace window, every restart pages the whole team — including the restart `pm2 set` triggers on this module itself |
+| **Crash-loop collapse** | 50 crashes produce 2 notifications (one crash, one escalation), not 50 - and the count stays at 2 for 1000 crashes |
+| **Startup suppression** | A PM2 daemon restart emits `start`+`online` for every app at once. Without a grace window, every restart pages the whole team - including the restart `pm2 set` triggers on this module itself |
 | **Deduplication** | The same problem on the same instance inside 5 minutes is one alert with a counter |
 | **Grouping** | Four instances failing together is one message naming four instances |
 | **Flap damping** | An app bouncing healthy↔unhealthy is alerted once as flapping |
@@ -51,7 +51,7 @@ This module counts only `status === 'stopped'`.
 
 ### 2. `manually: true` does not mean a human did it
 
-It means **"PM2 was asked to act"**, via the API or CLI — a `pm2.restart()` from `pm2-liveness`
+It means **"PM2 was asked to act"**, via the API or CLI - a `pm2.restart()` from `pm2-liveness`
 sets it too. Treating it as "a human did it" would silently swallow exactly the automated
 restarts worth paging about.
 
@@ -60,10 +60,10 @@ distinguishes a deliberate stop from a crash is what happens *next*:
 
 | After the exit | Treated as |
 | --- | --- |
-| a `restart` event follows | **restart** — something asked PM2 to act |
+| a `restart` event follows | **restart** - something asked PM2 to act |
 | it comes back, non-zero exit code | **crash** |
 | it comes back, clean exit code | **restart** |
-| it stays down, autorestart **on** | **operator stop** — silent |
+| it stays down, autorestart **on** | **operator stop** - silent |
 | it stays down, autorestart **off** | **crash** |
 
 The invariant: a process that died on its own always alerts. A restart triggered by
@@ -72,7 +72,7 @@ The invariant: a process that died on its own always alerts. A restart triggered
 ### 3. There is no "crashed" event
 
 PM2's entire vocabulary is `start`, `online`, `exit`, `restart` and `restart overlimit`
-(with a space — not a colon or underscore). Everything else is derived.
+(with a space - not a colon or underscore). Everything else is derived.
 
 Memory-triggered restarts emit **nothing on the bus**: `max_memory_restart` calls
 `reloadProcessId` directly. The only trace anywhere is a line in PM2's own daemon log, so
@@ -84,7 +84,7 @@ memoryRestarts:
   pollSeconds: 5
 ```
 
-Best-effort by nature — it is tied to a log string rather than an API, so a PM2 release
+Best-effort by nature - it is tied to a log string rather than an API, so a PM2 release
 could change it. The failure mode is silence, never a wrong alert.
 
 ---
@@ -136,7 +136,7 @@ channels:                                # seven types available
 routes:                                  # first match wins
   - match: { app: 'api-*', severity: critical }
     channels: [oncall, ops]
-  - match: {}                            # default — put it last
+  - match: {}                            # default - put it last
     channels: [ops]
 ```
 
@@ -151,7 +151,7 @@ output.
 
 ### Why not `ecosystem.config.js`?
 
-PM2 silently discards unknown keys from app definitions — its validator is a whitelist, so
+PM2 silently discards unknown keys from app definitions - its validator is a whitelist, so
 a config block there vanishes with no warning. Use `pm2 set` or the sidecar file.
 
 ---
@@ -172,7 +172,7 @@ PagerDuty and Opsgenie are more than formatting: the alert fingerprint becomes t
 `dedup_key` / alias, so repeats group into one incident and a resolution notice **closes
 that incident** instead of opening a new one.
 
-`nodemailer` is an optional dependency — nobody should download an SMTP stack to post to
+`nodemailer` is an optional dependency - nobody should download an SMTP stack to post to
 Slack. If the `smtp` channel is used without it, the error says exactly what to install.
 
 ## Severity and routing
@@ -191,7 +191,7 @@ Routes match on app glob, namespace, minimum severity and condition. Severity is
 ## Alert content and redaction
 
 Alerts carry the last 15 lines of stderr, read from the file PM2 already wrote rather than
-by buffering the log bus — buffering would cost memory proportional to total log volume
+by buffering the log bus - buffering would cost memory proportional to total log volume
 across every app on the host, for data needed only when something breaks.
 
 **Redaction is on by default**, because these excerpts leave your host and land in a chat
@@ -204,7 +204,7 @@ regex is ignored rather than disabling the defaults.
 
 ## Reliability
 
-The PM2 bus has no delivery guarantee and no replay — a subscriber that is down misses
+The PM2 bus has no delivery guarantee and no replay - a subscriber that is down misses
 events permanently. Two things follow:
 
 - **Reconciliation.** Every 30 s the module compares `pm2.list()` against its own active
@@ -221,13 +221,13 @@ messages/minute with the overflow reported as a count.
 
 ## Troubleshooting
 
-**No alerts at all** — check `minSeverity` (default `warning` means `info` conditions are
+**No alerts at all** - check `minSeverity` (default `warning` means `info` conditions are
 dropped), confirm a route matches, and run `pm2 trigger pm2-alertmanager test-alert`.
 
-**Alerts stopped mid-incident** — expected. Crash-loop collapse suppresses follow-ups for
+**Alerts stopped mid-incident** - expected. Crash-loop collapse suppresses follow-ups for
 an hour, or until the app recovers.
 
-**`pm2` commands hang forever** — your `PM2_HOME` path is too long. PM2 binds
+**`pm2` commands hang forever** - your `PM2_HOME` path is too long. PM2 binds
 `$PM2_HOME/rpc.sock` and Linux caps socket paths at 107 characters; over that the bind
 fails silently and every client blocks. Check with
 `echo -n "$PM2_HOME/rpc.sock" | wc -c`.
@@ -236,7 +236,7 @@ fails silently and every client blocks. Check with
 
 ## Requirements
 
-Node 18 or newer — tested on 18, 20, 22, 24 and 26 — with PM2 5 or newer.
+Node 18 or newer - tested on 18, 20, 22, 24 and 26 - with PM2 5 or newer.
 
 ## Development
 
@@ -246,7 +246,7 @@ npm install && npm run build && npm test
 
 ## Design documentation
 
-- [`docs/requirements.md`](./docs/requirements.md) — requirements this was built against,
+- [`docs/requirements.md`](./docs/requirements.md) - requirements this was built against,
   including one revised after implementation disagreed with it.
 - Platform findings and the `pm2-liveness:status` contract live in **`pm2-ops-contract`**.
 

@@ -33,7 +33,7 @@ export async function render(
   const title = alert.detail.digest === true
     ? `Quiet hours summary: ${alert.count} alert(s) held`
     : resolved
-      ? `RESOLVED: ${alert.app} — ${what}`
+      ? `RESOLVED: ${alert.app} - ${what}`
       : `${alert.app} ${what} (${instances})`;
 
   const d = alert.detail;
