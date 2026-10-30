@@ -51,8 +51,8 @@
     "zod": "^3.23.8"
   },
   "peerDependencies": {
-    "pm2": ">=5",
-    "nodemailer": "^6.9.0"
+    "nodemailer": "^6.9.0",
+    "pm2": ">=5"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
@@ -68,5 +68,13 @@
     "nodemailer": {
       "optional": true
     }
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aareez01/pm2-alertmanager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Aareez01/pm2-alertmanager/issues"
+  },
+  "homepage": "https://github.com/Aareez01/pm2-alertmanager#readme"
 }
