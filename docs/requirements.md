@@ -4,7 +4,7 @@
 
 Depends on the shared platform constraints and wire contract, which live in the
 **`pm2-ops-contract`** repository (`00-platform-and-contract.md`) because both this module
-and `pm2-probe` are bound by them. Read that first.
+and `pm2-liveness` are bound by them. Read that first.
 
 ---
 
@@ -24,7 +24,7 @@ and resolution notices.
 **Goals**
 - Free, self-hosted replacement for PM2 Plus notifications.
 - Correct, quiet behaviour under crash-loop and flapping conditions.
-- Consume both native PM2 events and `pm2-probe:status` events.
+- Consume both native PM2 events and `pm2-liveness:status` events.
 
 **Non-goals (v1)**
 - On-call scheduling, escalation policies, acknowledgement workflows — that is PagerDuty/Opsgenie's
@@ -36,7 +36,7 @@ and resolution notices.
 
 ### 3.1 Event sources
 
-- **REQ-AM-01** — Subscribe via `pm2.launchBus()` to `process:event` and to `pm2-probe:status`.
+- **REQ-AM-01** — Subscribe via `pm2.launchBus()` to `process:event` and to `pm2-liveness:status`.
 - **REQ-AM-02** — Per F4 the native vocabulary is `start`, `online`, `exit`, `restart`, and
   `restart overlimit`. Match `'restart overlimit'` **with the space** — this is the most likely
   implementation bug in the whole module and must have a dedicated test.
@@ -53,7 +53,7 @@ and resolution notices.
     within 30 s
   - **crash loop** = `restart overlimit`, or ≥N *deduplicated* exits for one `pm_id` within a window
 - **REQ-AM-03a** — ⚠️ **`manually` MUST NOT be read as "a human did it."** Per F4b it means "PM2 was
-  asked to act", via the API or CLI — a `pm2.restart()` from `pm2-probe` sets it too.
+  asked to act", via the API or CLI — a `pm2.restart()` from `pm2-liveness` sets it too.
 
   **It is also always `false` on an exit event** (F4b), so it cannot classify one at all. A revision
   of this requirement that tried to use it for exactly that was inert, and the lab showed no change
@@ -90,8 +90,8 @@ and resolution notices.
   `memoryRestarts.enabled`, best-effort by nature — tied to a log string rather than an API, so the
   failure mode is silence, never a wrong alert. Lab scenario 23 verifies it against a real leaking
   app.
-- **REQ-AM-06** — Per C5, operate fully on native events alone when `pm2-probe` is not installed.
-- **REQ-AM-07** — Per C1, ignore `pm2-probe:status` events with an unrecognised `v`, logging once per
+- **REQ-AM-06** — Per C5, operate fully on native events alone when `pm2-liveness` is not installed.
+- **REQ-AM-07** — Per C1, ignore `pm2-liveness:status` events with an unrecognised `v`, logging once per
   unknown version.
 
 ### 3.2 Noise control — the core of the module
@@ -203,7 +203,7 @@ and resolution notices.
 4. A `restart overlimit` event is matched — explicit test for the space in the event name.
 4a. A single restart producing two `exit` events increments the crash counter by **one**, not two
     (REQ-AM-02a).
-4b. A restart issued programmatically by `pm2-probe` (which arrives with `manually=true`) **does**
+4b. A restart issued programmatically by `pm2-liveness` (which arrives with `manually=true`) **does**
     produce an alert (REQ-AM-03a).
 5. Killing the module mid-incident and restarting it does not re-alert the active incident, and still
    sends the resolution notice when the app recovers (REQ-AM-25/26).
@@ -211,7 +211,7 @@ and resolution notices.
    via reconciliation (REQ-AM-24), not via the bus.
 7. A log excerpt containing an AWS key shape is redacted before transmission (REQ-AM-22).
 8. Slack webhook returning 500 three times results in a dead-letter log entry and no module crash.
-9. Module runs with `pm2-probe` absent and alerts correctly on native events only (REQ-AM-06).
+9. Module runs with `pm2-liveness` absent and alerts correctly on native events only (REQ-AM-06).
 
 ## 5. Risks
 
@@ -225,6 +225,6 @@ and resolution notices.
 
 ## 6. Sequencing note
 
-Build `pm2-probe` first. `pm2-alertmanager` is independently useful on native events (REQ-AM-06), but
+Build `pm2-liveness` first. `pm2-alertmanager` is independently useful on native events (REQ-AM-06), but
 the demo that sells the suite — a hung process detected, restarted, and alerted — needs both, and the
 probe is the half that cannot be faked.

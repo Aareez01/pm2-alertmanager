@@ -15,7 +15,7 @@ pm2 set pm2-alertmanager:routes   '[{"match":{},"channels":["oncall"]}]'
 pm2 trigger pm2-alertmanager test-alert
 ```
 
-Works standalone. If [`pm2-probe`](../pm2-probe) is also installed, health-probe failures
+Works standalone. If [`pm2-liveness`](../pm2-liveness) is also installed, health-probe failures
 become alerts too.
 
 ---
@@ -51,7 +51,7 @@ This module counts only `status === 'stopped'`.
 
 ### 2. `manually: true` does not mean a human did it
 
-It means **"PM2 was asked to act"**, via the API or CLI — a `pm2.restart()` from `pm2-probe`
+It means **"PM2 was asked to act"**, via the API or CLI — a `pm2.restart()` from `pm2-liveness`
 sets it too. Treating it as "a human did it" would silently swallow exactly the automated
 restarts worth paging about.
 
@@ -67,7 +67,7 @@ distinguishes a deliberate stop from a crash is what happens *next*:
 | it stays down, autorestart **off** | **crash** |
 
 The invariant: a process that died on its own always alerts. A restart triggered by
-`pm2-probe` is reported once, as `probe-fail`, not twice.
+`pm2-liveness` is reported once, as `probe-fail`, not twice.
 
 ### 3. There is no "crashed" event
 
@@ -234,6 +234,10 @@ fails silently and every client blocks. Check with
 
 ---
 
+## Requirements
+
+Node 18 or newer — tested on 18, 20, 22, 24 and 26 — with PM2 5 or newer.
+
 ## Development
 
 ```bash
@@ -244,7 +248,7 @@ npm install && npm run build && npm test
 
 - [`docs/requirements.md`](./docs/requirements.md) — requirements this was built against,
   including one revised after implementation disagreed with it.
-- Platform findings and the `pm2-probe:status` contract live in **`pm2-ops-contract`**.
+- Platform findings and the `pm2-liveness:status` contract live in **`pm2-ops-contract`**.
 
 ## License
 

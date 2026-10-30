@@ -168,7 +168,7 @@ export class Engine {
     if (!isSupportedVersion(ev.probe)) {
       metrics.inc('unknownContractVersions');
       logOnce(`contract:v${ev.probe.v}`, 'warn',
-        'ignoring pm2-probe:status with unsupported contract version', { v: ev.probe.v });
+        'ignoring pm2-liveness:status with unsupported contract version', { v: ev.probe.v });
       return;
     }
     this.enqueue(ev);

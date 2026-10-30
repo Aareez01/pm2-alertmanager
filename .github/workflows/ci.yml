@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22 (Jod), 24 (Krypton) and 26 (Lithium) are the live LTS lines. 18 and 20
+        # are past end-of-life but still common on older hosts, and `engines` claims
+        # them, so they are tested rather than merely asserted. 27 is alpha and is not
+        # a support target.
+        node: ['18', '20', '22', '24', '26']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+      # PM2 binds $PM2_HOME/rpc.sock, and Linux caps unix socket paths at 107 chars.
+      # Over that the bind fails SILENTLY: no socket, every pm2 command hangs forever,
+      # and the orphaned daemon spins at 100% CPU. A runner's default paths are long
+      # enough to hit this, so it is asserted rather than hoped for.
+      - name: Check PM2_HOME socket path length
+        run: |
+          export PM2_HOME="$HOME/.pm2ci"
+          LEN=$(echo -n "$PM2_HOME/rpc.sock" | wc -c)
+          echo "socket path is $LEN chars (limit 107)"
+          test "$LEN" -lt 107
+
+      - name: Verify the published tarball contents
+        if: matrix.node == '26'
+        run: |
+          npm pack --dry-run 2>&1 | tee /tmp/pack.txt
+          grep -q "dist/index.js" /tmp/pack.txt
+          # Tests and sources must not ship.
+          if grep -qE "npm notice.*(test/|src/)" /tmp/pack.txt; then
+            echo "tarball contains test or src files"; exit 1
+          fi

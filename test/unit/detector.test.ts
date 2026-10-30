@@ -82,7 +82,7 @@ describe('what follows an exit is what classifies it', () => {
   });
 
   it('a REQUESTED restart is not a crash, even with a non-zero exit code', () => {
-    // pm2-probe restarting a hung instance: start/online first, then `restart` with
+    // pm2-liveness restarting a hung instance: start/online first, then `restart` with
     // manually=true. Waiting settleMs is what lets the second event be seen.
     const d = new Detector(opts);
     d.ingest(ev({ exitCode: 1 }), 1000);

@@ -16,7 +16,7 @@ import { NormalizedEvent } from '../events/normalize';
  *     The flag is only ever true on `start` and on the `restart` event raised through
  *     notifyByProcessId. So it cannot classify an exit at all - and where it IS true, it
  *     means "PM2 was asked to do this", not "a human did it", since a pm2.restart() from
- *     pm2-probe sets it too.
+ *     pm2-liveness sets it too.
  *
  *     What distinguishes a deliberate stop from a crash is therefore NOT on the exit
  *     event. It is what happens next: a requested restart is followed by a `restart`
@@ -271,7 +271,7 @@ export class Detector {
         s.pending = null;
 
         if (p.requestedRestart) {
-          // Something asked PM2 to restart this - a deploy, an operator, or pm2-probe.
+          // Something asked PM2 to restart this - a deploy, an operator, or pm2-liveness.
           // The reason it was unhealthy, if it was, is reported by probe-fail.
           out.push({ ...this.base(p.ev), kind: 'restart', severity: 'info',
             detail: { restartTime: p.ev.restartTime, requested: true } });

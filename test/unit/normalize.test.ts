@@ -46,7 +46,7 @@ describe('normalizeProbeEvent', () => {
   };
 
   it('reads the payload from the bus envelope data field', () => {
-    const ev = normalizeProbeEvent({ at: 1, data: valid, process: { name: 'pm2-probe' } });
+    const ev = normalizeProbeEvent({ at: 1, data: valid, process: { name: 'pm2-liveness' } });
     expect(ev?.kind).toBe('probe-status');
     // Subject comes from the payload, NOT the envelope - the envelope names the emitter.
     expect(ev?.app).toBe('api');

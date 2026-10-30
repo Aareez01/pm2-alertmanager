@@ -1,15 +1,15 @@
 /**
- * Consumer-side copy of the pm2-probe:status wire contract.
+ * Consumer-side copy of the pm2-liveness:status wire contract.
  *
  * This is deliberately a COPY, not an import. The contract is a wire format - like any
- * webhook payload - and pm2-probe ships from a separate repository on its own release
+ * webhook payload - and pm2-liveness ships from a separate repository on its own release
  * cadence. Taking a package dependency on the producer would couple two modules that are
  * meant to be independently installable; neither may hard-depend on the other.
  *
  * Normative definition: pm2-ops-contract/00-platform-and-contract.md
  */
 
-export const PROBE_STATUS_EVENT = 'pm2-probe:status';
+export const PROBE_STATUS_EVENT = 'pm2-liveness:status';
 
 /** The contract version this consumer understands. */
 export const SUPPORTED_CONTRACT_VERSION = 1;
