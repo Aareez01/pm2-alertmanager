@@ -11,10 +11,17 @@ import { route as routeAlert } from './router';
 import { Channel } from '../channels/types';
 import { SlackChannel } from '../channels/slack';
 import { WebhookChannel } from '../channels/webhook';
+import { TeamsChannel } from '../channels/teams';
+import { TelegramChannel } from '../channels/telegram';
+import { PagerDutyChannel } from '../channels/pagerduty';
+import { OpsgenieChannel } from '../channels/opsgenie';
+import { SmtpChannel } from '../channels/smtp';
 import { Deliverer } from '../channels/delivery';
 import { render } from '../content/render';
 import { compileRules } from '../content/redact';
 import { defaultStatePath, loadState, saveState } from './state';
+import { MemoryRestartWatcher, defaultPm2LogPath } from './memoryWatcher';
+import { inQuietHours } from './suppressor';
 import { log, logOnce } from '../log';
 import * as metrics from './metrics';
 
@@ -39,12 +46,18 @@ export class Engine {
   private bus: Pm2Bus | null = null;
   private readonly statePath: string;
   private readonly bootAt = Date.now();
+  private memoryWatcher: MemoryRestartWatcher | null = null;
+  private lastList: Pm2Process[] = [];
+  /** Alerts withheld during quiet hours, summarised when the window ends. */
+  private held: Alert[] = [];
+  private wasQuiet = false;
 
   constructor(
     private readonly client: Pm2Client,
     private config: AlertmanagerConfig,
   ) {
     this.detector = new Detector({
+      settleMs: config.detector.settleSeconds * 1000,
       restartWindowMs: config.detector.restartWindowSeconds * 1000,
       crashLoopThreshold: config.detector.crashLoopThreshold,
       crashLoopWindowMs: config.detector.crashLoopWindowSeconds * 1000,
@@ -66,10 +79,28 @@ export class Engine {
   private buildChannels(): void {
     this.channels.clear();
     for (const [name, c] of Object.entries(this.config.channels)) {
-      if (c.type === 'slack') {
-        this.channels.set(name, new SlackChannel(name, c.webhookUrl, c.timeoutMs));
-      } else {
-        this.channels.set(name, new WebhookChannel(name, c.url, c.headers, c.template, c.timeoutMs));
+      switch (c.type) {
+        case 'slack':
+          this.channels.set(name, new SlackChannel(name, c.webhookUrl, c.timeoutMs)); break;
+        case 'webhook':
+          this.channels.set(name,
+            new WebhookChannel(name, c.url, c.headers, c.template, c.timeoutMs)); break;
+        case 'teams':
+          this.channels.set(name, new TeamsChannel(name, c.webhookUrl, c.timeoutMs)); break;
+        case 'telegram':
+          this.channels.set(name,
+            new TelegramChannel(name, c.botToken, c.chatId, c.baseUrl, c.timeoutMs)); break;
+        case 'pagerduty':
+          this.channels.set(name,
+            new PagerDutyChannel(name, c.routingKey, c.baseUrl, c.timeoutMs)); break;
+        case 'opsgenie':
+          this.channels.set(name,
+            new OpsgenieChannel(name, c.apiKey, c.baseUrl, c.timeoutMs)); break;
+        case 'smtp':
+          this.channels.set(name, new SmtpChannel(name, {
+            host: c.host, port: c.port, secure: c.secure, user: c.user,
+            pass: c.pass, from: c.from, to: c.to,
+          })); break;
       }
     }
   }
@@ -78,7 +109,8 @@ export class Engine {
     this.suppressor.restore(loadState(this.statePath)?.suppressor);
 
     // Reconcile against reality BEFORE subscribing, then let startup suppression cover
-    // the start/online storm that a daemon restart produces.
+    // the start/online storm that a daemon restart produces. This also primes the
+    // process list that exit classification and memory alerts both read.
     await this.reconcile();
 
     this.bus = await this.client.launchBus();
@@ -86,9 +118,25 @@ export class Engine {
     this.bus.on(PROBE_STATUS_EVENT, (p) => this.onProbeEvent(p));
 
     this.every(1000, () => this.drain());
-    this.every(5000, () => this.emitConditions(this.detector.tick()));
+    this.every(1000, () =>
+      this.emitConditions(this.detector.tick(Date.now(), (app, pmId) => {
+        const p = this.lastList.find(
+          (x) => x.name === app && (x.pm_id ?? x.pm2_env?.pm_id) === pmId);
+        if (!p) return null;
+        // PM2 defaults autorestart to true; only an explicit false disables it.
+        return { autorestart: p.pm2_env?.autorestart !== false };
+      })));
     this.every(this.config.reconcileSeconds * 1000, () => void this.reconcile());
     this.every(30_000, () => this.persist());
+    this.every(5_000, () => this.checkQuietWindow());
+
+    if (this.config.memoryRestarts.enabled) {
+      this.memoryWatcher = new MemoryRestartWatcher(
+        this.config.memoryRestarts.pm2LogPath || defaultPm2LogPath());
+      this.every(this.config.memoryRestarts.pollSeconds * 1000,
+        () => void this.pollMemoryRestarts());
+      log.info('memory-restart detection enabled (best-effort, reads PM2 daemon log)');
+    }
 
     log.info('pm2-alertmanager started', {
       channels: this.channels.size,
@@ -175,6 +223,11 @@ export class Engine {
       });
       return;
     }
+    if (decision.hold === true && decision.reason === 'quiet-hours') {
+      // Held, not dropped: summarised when the quiet window ends.
+      if (this.held.length < 500) this.held.push(alert);
+      return;
+    }
     const bucket = this.group.get(alert.groupKey) ?? [];
     bucket.push(alert);
     this.group.set(alert.groupKey, bucket);
@@ -242,6 +295,7 @@ export class Engine {
       return;
     }
 
+    this.lastList = list;
     const byApp = new Map<string, Pm2Process[]>();
     for (const p of list) {
       if (isModule(p) || !p.name) continue;
@@ -253,8 +307,14 @@ export class Engine {
     const now = Date.now();
     for (const [app, procs] of byApp) {
       const down = procs.filter((p) => {
-        const s = p.pm2_env?.status;
-        return s === 'errored' || s === 'stopped';
+        const st = p.pm2_env?.status;
+        // 'errored' means PM2 tried and gave up - always an incident.
+        if (st === 'errored') return true;
+        // 'stopped' is ambiguous, and reconciliation is the second door into the same
+        // decision the detector makes from the bus, so it must use the same rule:
+        // PM2 would have restarted this unless it was asked not to.
+        if (st === 'stopped') return p.pm2_env?.autorestart === false;
+        return false;
       });
       const activeEntry = this.active.get(app);
 
@@ -300,6 +360,88 @@ export class Engine {
       }
     }
     metrics.set('activeAlerts', this.active.size);
+  }
+
+  /**
+   * Quiet hours hold sub-threshold alerts rather than dropping them; when the window
+   * ends, everything held goes out as a single digest.
+   *
+   * Startup-grace holds are deliberately NOT summarised - those are the start/online
+   * storm from a daemon restart, and anything genuinely broken is picked up by
+   * reconciliation instead.
+   */
+  private checkQuietWindow(): void {
+    const now = Date.now();
+    const nowQuiet = inQuietHours(this.config.suppression.quietHours, now);
+    if (this.wasQuiet && !nowQuiet && this.held.length > 0) {
+      const held = this.held;
+      this.held = [];
+      void this.sendDigest(held, now);
+    }
+    this.wasQuiet = nowQuiet;
+  }
+
+  private async sendDigest(held: Alert[], now: number): Promise<void> {
+    const byApp = new Map<string, number>();
+    for (const a of held) byApp.set(a.app, (byApp.get(a.app) ?? 0) + a.count);
+    const summary = [...byApp.entries()]
+      .sort((x, y) => y[1] - x[1])
+      .map(([app, n]) => `${app}: ${n}`)
+      .join(', ');
+
+    const digest: Alert = {
+      fingerprint: `digest:${now}`,
+      groupKey: 'digest',
+      kind: 'crash',
+      severity: 'warning',
+      app: 'quiet-hours digest',
+      pmIds: [],
+      host: HOST,
+      firstAt: Math.min(...held.map((a) => a.firstAt)),
+      lastAt: now,
+      count: held.length,
+      detail: { digest: true, heldAlerts: held.length, summary },
+    };
+    log.info('quiet hours ended, sending digest', { heldAlerts: held.length, summary });
+    await this.dispatch(digest, false);
+  }
+
+  private async pollMemoryRestarts(): Promise<void> {
+    if (!this.memoryWatcher) return;
+    const hits = await this.memoryWatcher.poll();
+    if (hits.length === 0) return;
+
+    // The cached list can predate the process we just saw restart, which would name the
+    // alert "pm_id 7" instead of the app. Refresh once before naming anything.
+    const known = (id: number) =>
+      this.lastList.find((p) => (p.pm_id ?? p.pm2_env?.pm_id) === id);
+    if (hits.some((h) => !known(h.pmId))) {
+      try {
+        this.lastList = await this.client.list();
+      } catch {
+        /* keep the stale list rather than dropping the alert */
+      }
+    }
+
+    for (const hit of hits) {
+      const proc = known(hit.pmId);
+      const app = proc?.name ?? `pm_id ${hit.pmId}`;
+      this.consider(alertFrom({
+        kind: 'memory-restart',
+        severity: 'warning',
+        app,
+        pmId: hit.pmId,
+        namespace: proc?.pm2_env?.namespace,
+        at: Date.now(),
+        detail: {
+          currentMemoryBytes: hit.currentMemory,
+          limitBytes: hit.limit,
+          currentMemoryMb: Math.round(hit.currentMemory / 1048576),
+          limitMb: Math.round(hit.limit / 1048576),
+          errLogPath: proc?.pm2_env?.pm_err_log_path,
+        },
+      }, HOST));
+    }
   }
 
   /** `pm2 trigger pm2-alertmanager test-alert` - verify routing without breaking anything. */

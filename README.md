@@ -51,20 +51,41 @@ This module counts only `status === 'stopped'`.
 
 ### 2. `manually: true` does not mean a human did it
 
-It means "via the API or CLI". A `pm2.restart()` call from `pm2-probe` sets it. Suppressing
-"manual" actions on that flag would silently swallow exactly the automated restarts worth
-paging about. This module records the flag for diagnostics and **never branches on it** —
-an operator stop is inferred instead from an exit that is never followed by the process
-coming back.
+It means **"PM2 was asked to act"**, via the API or CLI — a `pm2.restart()` from `pm2-probe`
+sets it too. Treating it as "a human did it" would silently swallow exactly the automated
+restarts worth paging about.
+
+It is also **always `false` on an exit event**, so it cannot classify one. What
+distinguishes a deliberate stop from a crash is what happens *next*:
+
+| After the exit | Treated as |
+| --- | --- |
+| a `restart` event follows | **restart** — something asked PM2 to act |
+| it comes back, non-zero exit code | **crash** |
+| it comes back, clean exit code | **restart** |
+| it stays down, autorestart **on** | **operator stop** — silent |
+| it stays down, autorestart **off** | **crash** |
+
+The invariant: a process that died on its own always alerts. A restart triggered by
+`pm2-probe` is reported once, as `probe-fail`, not twice.
 
 ### 3. There is no "crashed" event
 
 PM2's entire vocabulary is `start`, `online`, `exit`, `restart` and `restart overlimit`
 (with a space — not a colon or underscore). Everything else is derived.
 
-Memory-triggered restarts are **not detectable**: `max_memory_restart` calls
-`reloadProcessId` directly and emits nothing distinguishable. That is a known gap, not an
-oversight.
+Memory-triggered restarts emit **nothing on the bus**: `max_memory_restart` calls
+`reloadProcessId` directly. The only trace anywhere is a line in PM2's own daemon log, so
+this module tails it:
+
+```yaml
+memoryRestarts:
+  enabled: true        # opt-in
+  pollSeconds: 5
+```
+
+Best-effort by nature — it is tied to a log string rather than an API, so a PM2 release
+could change it. The failure mode is silence, never a wrong alert.
 
 ---
 
@@ -99,7 +120,7 @@ content:
     - name: internal-ids
       pattern: 'cust_[A-Za-z0-9]{10}'
 
-channels:
+channels:                                # seven types available
   oncall:
     type: slack
     webhookUrl: ${SLACK_WEBHOOK_URL}     # resolved from the environment
@@ -107,6 +128,10 @@ channels:
     type: webhook
     url: ${OPS_WEBHOOK}
     headers: { X-Source: pm2 }
+  pager:
+    type: pagerduty
+    routingKey: ${PD_ROUTING_KEY}        # resolution CLOSES the incident
+  # also: teams, telegram, opsgenie, smtp
 
 routes:                                  # first match wins
   - match: { app: 'api-*', severity: critical }
@@ -131,12 +156,31 @@ a config block there vanishes with no warning. Use `pm2 set` or the sidecar file
 
 ---
 
+## Channels
+
+| Type | Required config | Notes |
+| --- | --- | --- |
+| `slack` | `webhookUrl` | blocks, colour-coded by severity |
+| `webhook` | `url` | JSON; optional `template` with `{{app}}`, `{{title}}`, … |
+| `teams` | `webhookUrl` | MessageCard |
+| `telegram` | `botToken`, `chatId` | HTML; `baseUrl` for a self-hosted Bot API |
+| `pagerduty` | `routingKey` | Events API v2; `baseUrl` for EU accounts |
+| `opsgenie` | `apiKey` | Alerts API v2; `baseUrl` for EU |
+| `smtp` | `host`, `from`, `to` | requires `npm install nodemailer` |
+
+PagerDuty and Opsgenie are more than formatting: the alert fingerprint becomes the
+`dedup_key` / alias, so repeats group into one incident and a resolution notice **closes
+that incident** instead of opening a new one.
+
+`nodemailer` is an optional dependency — nobody should download an SMTP stack to post to
+Slack. If the `smtp` channel is used without it, the error says exactly what to install.
+
 ## Severity and routing
 
 | Condition | Default severity |
 | --- | --- |
 | `operator-stop`, `restart` | `info` (below the default floor, so not sent) |
-| `crash` | `warning` |
+| `crash`, `memory-restart` | `warning` |
 | `crash-loop`, `probe-fail` | `critical` |
 
 Routes match on app glob, namespace, minimum severity and condition. Severity is a

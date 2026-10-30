@@ -52,16 +52,44 @@ and resolution notices.
   - **restart** = native `restart` event, or `exit` followed by `start`/`online` for the same `pm_id`
     within 30 s
   - **crash loop** = `restart overlimit`, or ≥N *deduplicated* exits for one `pm_id` within a window
-- **REQ-AM-03a** — ⚠️ **`manually` MUST NOT be used to detect operator action.** Per F4b it means
-  "via the API/CLI", not "by a human": a `pm2.restart()` call from `pm2-probe` produces
-  `manually=true`. Suppressing on this flag would silently swallow exactly the events that matter
-  most. Operator-initiated stops must instead be inferred from `exit` with `status === 'stopped'` and
-  **no** corresponding `start`/`online` within the restart window — a genuine stop leaves the process
-  down. Dedicated test: a probe-initiated restart MUST still alert.
+- **REQ-AM-03a** — ⚠️ **`manually` MUST NOT be read as "a human did it."** Per F4b it means "PM2 was
+  asked to act", via the API or CLI — a `pm2.restart()` from `pm2-probe` sets it too.
+
+  **It is also always `false` on an exit event** (F4b), so it cannot classify one at all. A revision
+  of this requirement that tried to use it for exactly that was inert, and the lab showed no change
+  in behaviour — the third pass at this rule, and the second to be wrong from source reading alone.
+
+  **Nothing on the exit event distinguishes a stop from a crash.** What distinguishes them is what
+  follows, so an exit is held briefly and classified from the sequence:
+
+  | After the exit | Classification |
+  | --- | --- |
+  | `restart` event with `manually=true` | **restart** (info) — something asked PM2 to act |
+  | start/online only, non-zero exit code | **crash** (warning) — died and was brought back |
+  | start/online only, clean exit code | **restart** (info) |
+  | nothing, `autorestart` **on** | **operator-stop** (info) — PM2 would have restarted it |
+  | nothing, `autorestart` **off** | **crash** (warning) — staying down proves nothing |
+
+  `autorestart` never appears on the bus, so the detector takes a lookup backed by `pm2.list()`.
+  Classification waits a **settle window** (default 3s) because `restart` arrives just *after*
+  `online`; without the wait, a probe-initiated restart is filed as a crash, which lab scenario 30
+  caught as spurious alert noise.
+
+  **The same rule must apply to reconciliation (REQ-AM-24)**, which is the second door into this
+  decision: a `stopped` app with autorestart enabled was stopped deliberately, and only `errored`,
+  or `stopped` with autorestart off, counts as an incident. Missing this was why scenario 21 kept
+  failing after the detector was correct.
+
+  The invariant: **a process that died on its own always alerts.** A probe-initiated restart is
+  reported once, by `probe-fail`, not twice.
 - **REQ-AM-04** — Per F5, the payload is `pm2_env` minus `env`. Any enrichment needing env vars
   requires a separate `pm2.list()` call. Do not assume `env` is present.
-- **REQ-AM-05** — Memory-restart alerts: per F6 there is no distinguishable signal. **Out of scope for
-  v1**, documented as a known gap. (Open question Q2.)
+- **REQ-AM-05** — **Memory-restart alerts: implemented** (was out of scope). Per F6 there is no bus
+  signal at all, so the module tails PM2's own daemon log for the `max_memory_restart` line, parses
+  the pm_id and memory figures, and resolves the app name from `pm2.list()`. Opt-in via
+  `memoryRestarts.enabled`, best-effort by nature — tied to a log string rather than an API, so the
+  failure mode is silence, never a wrong alert. Lab scenario 23 verifies it against a real leaking
+  app.
 - **REQ-AM-06** — Per C5, operate fully on native events alone when `pm2-probe` is not installed.
 - **REQ-AM-07** — Per C1, ignore `pm2-probe:status` events with an unrecognised `v`, logging once per
   unknown version.
@@ -103,9 +131,17 @@ and resolution notices.
   `info` (suppressed by default), single crash = `warning`, crash loop / probe-trip = `critical`.
 - **REQ-AM-16** — Routing rules match on app name (glob), namespace, severity, and condition, and
   select one or more channels. First-match-wins with an explicit default route.
-- **REQ-AM-17** — v1 channels: **Slack** (incoming webhook) and **generic webhook** (POST JSON,
-  user-supplied template). Per Q4, others follow demand. Designed behind a channel interface so
-  Teams/Telegram/PagerDuty/Opsgenie/SMTP are additive.
+- **REQ-AM-17** — **v1 channels: Slack, generic webhook, Microsoft Teams, Telegram, PagerDuty,
+  Opsgenie and SMTP.**
+
+  *Scope widened on request.* This originally shipped Slack and the generic webhook only, on the
+  reasoning that the generic webhook already covers Teams and Discord and that each native
+  integration is a support burden. All seven are now implemented behind the channel interface.
+
+  Two earn their keep beyond convenience: **PagerDuty** uses the alert fingerprint as `dedup_key` and
+  **Opsgenie** uses it as the alias, so repeats group into one incident and a resolution notice
+  *closes that incident* rather than opening another. **SMTP** keeps `nodemailer` as an optional
+  dependency — nobody should download an SMTP stack to post to Slack.
 - **REQ-AM-18** — Per-channel delivery retry with exponential backoff (3 attempts), and a dead-letter
   log. A failed Slack post must never crash the module (NFR-2) and must never block the event loop.
 - **REQ-AM-19** — Rate-limit per channel (default 20 messages/min) with overflow collapsed into a
@@ -162,8 +198,8 @@ and resolution notices.
 1. An app crash-looping 50 times in 2 minutes produces **two** alerts — one `crash`, one
    `crash-loop` escalation — and the same two at 200 and 1000 crashes (REQ-AM-10). Never 50.
 2. Restarting the PM2 daemon with 10 apps running produces **zero** alerts (REQ-AM-12).
-3. `pm2 stop api` produces no alert at default settings; `pm2 stop api` with `alertOnManual: true`
-   produces one `info` alert.
+3. `pm2 stop api` produces no alert at default settings (lab scenario 21), while an app that dies on
+   its own always does — including when something restarts it through the API straight afterwards.
 4. A `restart overlimit` event is matched — explicit test for the space in the event name.
 4a. A single restart producing two `exit` events increments the crash counter by **one**, not two
     (REQ-AM-02a).

@@ -11,10 +11,17 @@ import { NormalizedEvent } from '../events/normalize';
  *  1. `exit` fires TWICE per restart - once with status=stopping, once with status=stopped.
  *     Counting raw exits trips crash-loop detection at half the configured threshold.
  *
- *  2. `manually: true` does NOT mean a human did it. It means "via the API or CLI", so a
- *     pm2.restart() call from pm2-probe sets it. Suppressing on this flag would silently
- *     swallow exactly the failures worth paging about. We record the flag for diagnostics
- *     and never branch on it.
+ *  2. `manually` is ALWAYS FALSE on an exit event. God.notify('exit', proc) passes two
+ *     arguments, and Event.js sets manually = (typeof arg === 'undefined' ? false : true).
+ *     The flag is only ever true on `start` and on the `restart` event raised through
+ *     notifyByProcessId. So it cannot classify an exit at all - and where it IS true, it
+ *     means "PM2 was asked to do this", not "a human did it", since a pm2.restart() from
+ *     pm2-probe sets it too.
+ *
+ *     What distinguishes a deliberate stop from a crash is therefore NOT on the exit
+ *     event. It is what happens next: a requested restart is followed by a `restart`
+ *     event; a crash with autorestart is followed only by start/online; a deliberate stop
+ *     is followed by nothing at all while autorestart is still enabled.
  *
  *  3. An `exit` with a clean exit code is genuinely ambiguous at the moment it arrives: a
  *     restart and an operator stop look identical. The difference is only visible slightly
@@ -31,7 +38,8 @@ export type ConditionKind =
   | 'operator-stop'
   | 'restart'
   | 'probe-fail'
-  | 'recovered';
+  | 'recovered'
+  | 'memory-restart';
 
 export type Severity = 'info' | 'warning' | 'critical';
 
@@ -46,23 +54,42 @@ export interface Condition {
 }
 
 export interface DetectorOptions {
-  /** How long to wait before deciding a clean exit was a stop, not a restart. */
+  /** How long to wait, once an instance is back, for a `restart` event to arrive. */
+  settleMs: number;
+  /** How long to wait before concluding an instance is not coming back at all. */
   restartWindowMs: number;
   crashLoopThreshold: number;
   crashLoopWindowMs: number;
 }
 
 export const DEFAULT_DETECTOR_OPTIONS: DetectorOptions = {
+  settleMs: 3_000,
   restartWindowMs: 30_000,
   crashLoopThreshold: 3,
   crashLoopWindowMs: 60_000,
 };
 
+interface Pending {
+  at: number;
+  ev: NormalizedEvent;
+  /** A start/online arrived for this instance. */
+  cameBack: boolean;
+  /** A `restart` event with manually=true arrived - PM2 was asked to do this. */
+  requestedRestart: boolean;
+}
+
 interface InstanceState {
   exits: number[];
-  pending: { at: number; ev: NormalizedEvent } | null;
+  pending: Pending | null;
   inCrashLoop: boolean;
 }
+
+/** Settled facts the detector cannot learn from the bus. */
+export interface SettledState {
+  autorestart: boolean;
+}
+
+export type SettledLookup = (app: string, pmId: number) => SettledState | null;
 
 export class Detector {
   private readonly state = new Map<string, InstanceState>();
@@ -134,27 +161,9 @@ export class Detector {
       return out;
     }
 
-    const crashed = typeof ev.exitCode === 'number' && ev.exitCode !== 0;
-    if (crashed) {
-      out.push({
-        ...this.base(ev),
-        kind: 'crash',
-        severity: 'warning',
-        detail: {
-          exitCode: ev.exitCode,
-          restartTime: ev.restartTime,
-          unstableRestarts: ev.unstableRestarts,
-          errLogPath: ev.errLogPath,
-          revision: ev.revision,
-          // Recorded, never branched on - see the note at the top of this file.
-          pm2ManuallyFlag: ev.manuallyFlag,
-        },
-      });
-      return out;
-    }
-
-    // Clean exit: could be a restart or a stop. Decide once we see what follows.
-    s.pending = { at: now, ev };
+    // Nothing on the exit event itself can tell a stop from a crash, so hold it and let
+    // tick() decide from what follows.
+    s.pending = { at: now, ev, cameBack: false, requestedRestart: false };
     return out;
   }
 
@@ -162,10 +171,14 @@ export class Detector {
     const s = this.get(ev.app, ev.pmId);
     s.inCrashLoop = false;
     if (!s.pending) return [];
-    s.pending = null;
-    // It came back, so the clean exit was a restart rather than a stop.
-    return [{ ...this.base(ev), kind: 'restart', severity: 'info', detail: {
-      restartTime: ev.restartTime, pm2ManuallyFlag: ev.manuallyFlag } }];
+
+    s.pending.cameBack = true;
+    // `restart` with manually=true is the one place PM2 tells us it was ASKED to act.
+    // It arrives just after start/online, which is why classification waits settleMs.
+    if (ev.kind === 'restart' && ev.manuallyFlag === true) {
+      s.pending.requestedRestart = true;
+    }
+    return [];
   }
 
   private onOverlimit(ev: NormalizedEvent): Condition[] {
@@ -210,24 +223,59 @@ export class Detector {
     return [];
   }
 
-  /** Resolve clean exits that were never followed by the process coming back up. */
-  tick(now: number = Date.now()): Condition[] {
+  /**
+   * Classify held exits once enough has happened to tell them apart.
+   *
+   * `lookup` supplies autorestart, which the bus never carries: if PM2 would have
+   * restarted an instance and simply did not, it was asked to stop. Without it, an app
+   * that died with autorestart off and stayed down would be filed as a tidy shutdown.
+   */
+  tick(now: number = Date.now(), lookup?: SettledLookup): Condition[] {
     const out: Condition[] = [];
     for (const s of this.state.values()) {
-      if (!s.pending) continue;
-      if (now - s.pending.at < this.opts.restartWindowMs) continue;
-      const ev = s.pending.ev;
+      const p = s.pending;
+      if (!p) continue;
+
+      if (p.cameBack) {
+        if (now - p.at < this.opts.settleMs) continue;
+        s.pending = null;
+
+        if (p.requestedRestart) {
+          // Something asked PM2 to restart this - a deploy, an operator, or pm2-probe.
+          // The reason it was unhealthy, if it was, is reported by probe-fail.
+          out.push({ ...this.base(p.ev), kind: 'restart', severity: 'info',
+            detail: { restartTime: p.ev.restartTime, requested: true } });
+          continue;
+        }
+        if (typeof p.ev.exitCode === 'number' && p.ev.exitCode !== 0) {
+          // Died by itself and PM2 brought it back: a crash, however briefly.
+          out.push({ ...this.base(p.ev), kind: 'crash', severity: 'warning', detail: {
+            exitCode: p.ev.exitCode, restartTime: p.ev.restartTime,
+            unstableRestarts: p.ev.unstableRestarts, errLogPath: p.ev.errLogPath,
+            revision: p.ev.revision } });
+          continue;
+        }
+        out.push({ ...this.base(p.ev), kind: 'restart', severity: 'info',
+          detail: { restartTime: p.ev.restartTime } });
+        continue;
+      }
+
+      if (now - p.at < this.opts.restartWindowMs) continue;
       s.pending = null;
-      out.push({
-        ...this.base(ev),
-        kind: 'operator-stop',
-        severity: 'info',
-        detail: {
-          exitCode: ev.exitCode,
-          note: 'process stayed down past the restart window',
-          pm2ManuallyFlag: ev.manuallyFlag,
-        },
-      });
+
+      const settled = lookup ? lookup(p.ev.app, p.ev.pmId) : null;
+      if (settled && settled.autorestart === false) {
+        // It would never have come back on its own, so staying down proves nothing.
+        out.push({ ...this.base(p.ev), kind: 'crash', severity: 'warning', detail: {
+          exitCode: p.ev.exitCode, errLogPath: p.ev.errLogPath,
+          note: 'exited and stayed down with autorestart disabled' } });
+        continue;
+      }
+
+      // PM2 would have restarted it and did not: it was asked to stop.
+      out.push({ ...this.base(p.ev), kind: 'operator-stop', severity: 'info', detail: {
+        exitCode: p.ev.exitCode,
+        note: 'stayed down although autorestart is enabled, so the stop was requested' } });
     }
     return out;
   }

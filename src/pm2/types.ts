@@ -12,6 +12,7 @@ export interface Pm2Env {
   unstable_restarts?: number;
   exit_code?: number;
   pmx_module?: boolean;
+  autorestart?: boolean;
   pm_err_log_path?: string;
   versioning?: { revision?: string } | null;
 

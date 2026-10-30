@@ -10,6 +10,7 @@ const KIND_TITLES: Record<string, string> = {
   restart: 'restarted',
   'probe-fail': 'failed its health probe',
   recovered: 'recovered',
+  'memory-restart': 'was restarted for exceeding its memory limit',
 };
 
 export interface RenderOptions {
@@ -29,9 +30,11 @@ export async function render(
     ? `instance ${alert.pmIds[0]}`
     : `${alert.pmIds.length} instances (${alert.pmIds.join(', ')})`;
 
-  const title = resolved
-    ? `RESOLVED: ${alert.app} — ${what}`
-    : `${alert.app} ${what} (${instances})`;
+  const title = alert.detail.digest === true
+    ? `Quiet hours summary: ${alert.count} alert(s) held`
+    : resolved
+      ? `RESOLVED: ${alert.app} — ${what}`
+      : `${alert.app} ${what} (${instances})`;
 
   const d = alert.detail;
   const fields: RenderedAlert['fields'] = {
@@ -49,6 +52,10 @@ export async function render(
     reason: d.reason as string | undefined,
     probe: d.probe as string | undefined,
     probeAction: d.action as string | undefined,
+    memoryMb: d.currentMemoryMb as number | undefined,
+    memoryLimitMb: d.limitMb as number | undefined,
+    heldAlerts: d.heldAlerts as number | undefined,
+    summary: d.summary as string | undefined,
   };
 
   let excerpt: string[] = [];

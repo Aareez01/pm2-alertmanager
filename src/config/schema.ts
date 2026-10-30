@@ -3,6 +3,7 @@ import { z } from 'zod';
 const severity = z.enum(['info', 'warning', 'critical']);
 const condition = z.enum([
   'crash', 'crash-loop', 'operator-stop', 'restart', 'probe-fail', 'recovered',
+  'memory-restart',
 ]);
 
 const slackChannel = z.object({
@@ -20,7 +21,49 @@ const webhookChannel = z.object({
   timeoutMs: z.number().int().positive().default(10_000),
 });
 
-const channel = z.discriminatedUnion('type', [slackChannel, webhookChannel]);
+const teamsChannel = z.object({
+  type: z.literal('teams'),
+  webhookUrl: z.string().min(1),
+  timeoutMs: z.number().int().positive().default(10_000),
+});
+
+const telegramChannel = z.object({
+  type: z.literal('telegram'),
+  botToken: z.string().min(1),
+  chatId: z.string().min(1),
+  baseUrl: z.string().default('https://api.telegram.org'),
+  timeoutMs: z.number().int().positive().default(10_000),
+});
+
+const pagerdutyChannel = z.object({
+  type: z.literal('pagerduty'),
+  routingKey: z.string().min(1),
+  baseUrl: z.string().default('https://events.pagerduty.com'),
+  timeoutMs: z.number().int().positive().default(10_000),
+});
+
+const opsgenieChannel = z.object({
+  type: z.literal('opsgenie'),
+  apiKey: z.string().min(1),
+  baseUrl: z.string().default('https://api.opsgenie.com'),
+  timeoutMs: z.number().int().positive().default(10_000),
+});
+
+const smtpChannel = z.object({
+  type: z.literal('smtp'),
+  host: z.string().min(1),
+  port: z.number().int().positive().default(587),
+  secure: z.boolean().default(false),
+  user: z.string().optional(),
+  pass: z.string().optional(),
+  from: z.string().min(1),
+  to: z.array(z.string().min(1)).min(1),
+});
+
+const channel = z.discriminatedUnion('type', [
+  slackChannel, webhookChannel, teamsChannel, telegramChannel,
+  pagerdutyChannel, opsgenieChannel, smtpChannel,
+]);
 
 const route = z.object({
   match: z.object({
@@ -48,6 +91,8 @@ export const configSchema = z.object({
   stateFile: z.string().default(''),
 
   detector: z.object({
+    /** How long to wait, once an instance is back, for a `restart` event to arrive. */
+    settleSeconds: z.number().positive().default(3),
     restartWindowSeconds: z.number().positive().default(30),
     crashLoopThreshold: z.number().int().positive().default(3),
     crashLoopWindowSeconds: z.number().positive().default(60),
@@ -68,6 +113,16 @@ export const configSchema = z.object({
     attempts: z.number().int().positive().max(10).default(3),
     baseBackoffMs: z.number().int().positive().default(1000),
     ratePerMinute: z.number().int().positive().default(20),
+  }).default({}),
+
+  /**
+   * Detecting memory-triggered restarts requires reading PM2's own daemon log, because
+   * max_memory_restart emits nothing on the bus. Opt-in, and best-effort.
+   */
+  memoryRestarts: z.object({
+    enabled: z.boolean().default(false),
+    pm2LogPath: z.string().default(''),
+    pollSeconds: z.number().positive().default(5),
   }).default({}),
 
   content: z.object({
@@ -137,9 +192,11 @@ export function parseConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env):
 export function redactConfigForDisplay(cfg: AlertmanagerConfig): unknown {
   const channels: Record<string, unknown> = {};
   for (const [name, c] of Object.entries(cfg.channels)) {
-    channels[name] = c.type === 'slack'
-      ? { ...c, webhookUrl: '[redacted]' }
-      : { ...c, url: '[redacted]', headers: Object.keys(c.headers).length ? '[redacted]' : {} };
+    const masked: Record<string, unknown> = { ...c };
+    for (const k of ['webhookUrl', 'url', 'botToken', 'routingKey', 'apiKey', 'pass', 'headers']) {
+      if (masked[k] !== undefined) masked[k] = '[redacted]';
+    }
+    channels[name] = masked;
   }
   return { ...cfg, channels };
 }

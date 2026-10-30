@@ -65,21 +65,27 @@ describe('crash-loop collapse (REQ-AM-10)', () => {
    * it is one - so that is what is asserted, at two very different crash counts.
    */
   function runCrashes(n: number): string[] {
-    const d = new Detector({ restartWindowMs: 30_000, crashLoopThreshold: 3,
-      crashLoopWindowMs: 60_000 });
+    // A real crash loop is exit -> online -> exit -> online, and classification settles
+    // shortly after the instance is back. Feeding bare exits would hold every one of
+    // them pending and test nothing.
+    const d = new Detector({ settleMs: 1_000, restartWindowMs: 30_000,
+      crashLoopThreshold: 3, crashLoopWindowMs: 60_000 });
     const s = sup();
     const sent: string[] = [];
-    for (let i = 0; i < n; i++) {
-      const now = T0 + i * 1000;
-      const raw: NormalizedEvent = { kind: 'exit', app: 'api', pmId: 1, status: 'stopped',
-        exitCode: 1, at: now };
-      for (const c of d.ingest(raw, now)) {
+    const take = (cs: ReturnType<Detector['tick']>, now: number) => {
+      for (const c of cs) {
         const a = alertFrom(c, 'host-1');
-        if (s.evaluate(a, now).send) {
-          sent.push(a.kind);
-          s.noteSent(a, now);
-        }
+        if (s.evaluate(a, now).send) { sent.push(a.kind); s.noteSent(a, now); }
       }
+    };
+
+    for (let i = 0; i < n; i++) {
+      const t = T0 + i * 2_000;
+      const exit: NormalizedEvent = { kind: 'exit', app: 'api', pmId: 1,
+        status: 'stopped', exitCode: 1, at: t };
+      take(d.ingest(exit, t), t);
+      take(d.ingest({ kind: 'online', app: 'api', pmId: 1, at: t + 200 }, t + 200), t + 200);
+      take(d.tick(t + 1_500, () => ({ autorestart: true })), t + 1_500);
     }
     return sent;
   }
