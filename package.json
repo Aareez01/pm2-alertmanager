@@ -1,0 +1,51 @@
+{
+  "name": "pm2-alertmanager",
+  "version": "0.1.0",
+  "description": "Self-hosted alerting for PM2. Crash, crash-loop and probe alerts to Slack or any webhook, with the noise control on-call actually needs.",
+  "keywords": ["pm2", "pm2-module", "alerting", "slack", "webhook", "monitoring", "devops"],
+  "license": "MIT",
+  "main": "dist/index.js",
+  "engines": { "node": ">=18" },
+  "files": ["dist", "README.md", "LICENSE"],
+
+  "apps": [
+    {
+      "name": "pm2-alertmanager",
+      "script": "dist/index.js",
+      "instances": 1,
+      "exec_mode": "fork",
+      "autorestart": true,
+      "max_memory_restart": "150M",
+      "kill_timeout": 5000
+    }
+  ],
+
+  "config": {
+    "configFile": "",
+    "routes": "[]",
+    "channels": "{}",
+    "logLevel": "info",
+    "startupGraceSeconds": 60,
+    "reconcileSeconds": 30
+  },
+
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run test/unit"
+  },
+
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "zod": "^3.23.8"
+  },
+  "peerDependencies": { "pm2": ">=5" },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.7.5",
+    "pm2": "^7.1.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}
