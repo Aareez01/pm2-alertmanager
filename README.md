@@ -1,5 +1,7 @@
 # pm2-alertmanager
 
+[![CI](https://github.com/Aareez01/pm2-alertmanager/actions/workflows/ci.yml/badge.svg)](https://github.com/Aareez01/pm2-alertmanager/actions/workflows/ci.yml) [![licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](./LICENSE) [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](#requirements)
+
 Self-hosted alerting for PM2 - crash, crash-loop and health-probe alerts to Slack or any
 webhook, **with the noise control on-call actually needs**.
 
