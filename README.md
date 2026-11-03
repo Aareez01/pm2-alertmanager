@@ -122,7 +122,7 @@ content:
     - name: internal-ids
       pattern: 'cust_[A-Za-z0-9]{10}'
 
-channels:                                # seven types available
+channels:                                # eight types available
   oncall:
     type: slack
     webhookUrl: ${SLACK_WEBHOOK_URL}     # resolved from the environment
@@ -133,7 +133,7 @@ channels:                                # seven types available
   pager:
     type: pagerduty
     routingKey: ${PD_ROUTING_KEY}        # resolution CLOSES the incident
-  # also: teams, telegram, opsgenie, smtp
+  # also: teams, discord, telegram, opsgenie, smtp
 
 routes:                                  # first match wins
   - match: { app: 'api-*', severity: critical }
@@ -165,10 +165,17 @@ a config block there vanishes with no warning. Use `pm2 set` or the sidecar file
 | `slack` | `webhookUrl` | blocks, colour-coded by severity |
 | `webhook` | `url` | JSON; optional `template` with `{{app}}`, `{{title}}`, … |
 | `teams` | `webhookUrl` | MessageCard |
+| `discord` | `webhookUrl` | embed; optional `username`; mentions disabled |
 | `telegram` | `botToken`, `chatId` | HTML; `baseUrl` for a self-hosted Bot API |
 | `pagerduty` | `routingKey` | Events API v2; `baseUrl` for EU accounts |
 | `opsgenie` | `apiKey` | Alerts API v2; `baseUrl` for EU |
 | `smtp` | `host`, `from`, `to` | requires `npm install nodemailer` |
+
+Discord's limits are enforced rather than hoped for. Its webhook answers an oversized embed
+with a 400, which is not retryable, so a long stack trace would lose the alert outright - every
+field is clamped to the documented cap on the way out. Mentions are disabled on every message:
+alert bodies carry application output, and one log line reading `@everyone` would otherwise page
+an entire server at 3am.
 
 PagerDuty and Opsgenie are more than formatting: the alert fingerprint becomes the
 `dedup_key` / alias, so repeats group into one incident and a resolution notice **closes

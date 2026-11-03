@@ -27,6 +27,14 @@ const teamsChannel = z.object({
   timeoutMs: z.number().int().positive().default(10_000),
 });
 
+const discordChannel = z.object({
+  type: z.literal('discord'),
+  webhookUrl: z.string().min(1),
+  /** Overrides the webhook's configured name; Discord caps this at 80 characters. */
+  username: z.string().nullable().default(null),
+  timeoutMs: z.number().int().positive().default(10_000),
+});
+
 const telegramChannel = z.object({
   type: z.literal('telegram'),
   botToken: z.string().min(1),
@@ -61,7 +69,7 @@ const smtpChannel = z.object({
 });
 
 const channel = z.discriminatedUnion('type', [
-  slackChannel, webhookChannel, teamsChannel, telegramChannel,
+  slackChannel, webhookChannel, teamsChannel, discordChannel, telegramChannel,
   pagerdutyChannel, opsgenieChannel, smtpChannel,
 ]);
 

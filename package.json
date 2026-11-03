@@ -1,6 +1,6 @@
 {
   "name": "pm2-alertmanager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Self-hosted alerting for PM2. Crash, crash-loop and probe alerts to Slack or any webhook, with the noise control on-call actually needs.",
   "keywords": [
     "pm2",

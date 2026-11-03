@@ -131,12 +131,16 @@ and resolution notices.
   `info` (suppressed by default), single crash = `warning`, crash loop / probe-trip = `critical`.
 - **REQ-AM-16** - Routing rules match on app name (glob), namespace, severity, and condition, and
   select one or more channels. First-match-wins with an explicit default route.
-- **REQ-AM-17** - **v1 channels: Slack, generic webhook, Microsoft Teams, Telegram, PagerDuty,
-  Opsgenie and SMTP.**
+- **REQ-AM-17** - **v1 channels: Slack, generic webhook, Microsoft Teams, Discord, Telegram,
+  PagerDuty, Opsgenie and SMTP.**
 
-  *Scope widened on request.* This originally shipped Slack and the generic webhook only, on the
-  reasoning that the generic webhook already covers Teams and Discord and that each native
-  integration is a support burden. All seven are now implemented behind the channel interface.
+  *Scope widened on request, twice.* This originally shipped Slack and the generic webhook only, on
+  the reasoning that the generic webhook already covers Teams and Discord and that each native
+  integration is a support burden. Teams and five others were added first; **Discord was added last,
+  on request, and the original reasoning was wrong about it** - Discord's webhook rejects an
+  oversized embed with a 400 rather than truncating, and resolves `@everyone` inside anything it is
+  handed, so a generic webhook pointed at it loses alerts and pages whole servers off log content.
+  All eight are now implemented behind the channel interface.
 
   Two earn their keep beyond convenience: **PagerDuty** uses the alert fingerprint as `dedup_key` and
   **Opsgenie** uses it as the alias, so repeats group into one incident and a resolution notice

@@ -12,6 +12,7 @@ import { Channel } from '../channels/types';
 import { SlackChannel } from '../channels/slack';
 import { WebhookChannel } from '../channels/webhook';
 import { TeamsChannel } from '../channels/teams';
+import { DiscordChannel } from '../channels/discord';
 import { TelegramChannel } from '../channels/telegram';
 import { PagerDutyChannel } from '../channels/pagerduty';
 import { OpsgenieChannel } from '../channels/opsgenie';
@@ -87,6 +88,9 @@ export class Engine {
             new WebhookChannel(name, c.url, c.headers, c.template, c.timeoutMs)); break;
         case 'teams':
           this.channels.set(name, new TeamsChannel(name, c.webhookUrl, c.timeoutMs)); break;
+        case 'discord':
+          this.channels.set(name,
+            new DiscordChannel(name, c.webhookUrl, c.username, c.timeoutMs)); break;
         case 'telegram':
           this.channels.set(name,
             new TelegramChannel(name, c.botToken, c.chatId, c.baseUrl, c.timeoutMs)); break;

@@ -6,6 +6,7 @@ import { RenderedAlert } from '../../src/channels/types';
 import { SlackChannel } from '../../src/channels/slack';
 import { WebhookChannel } from '../../src/channels/webhook';
 import { TeamsChannel } from '../../src/channels/teams';
+import { DiscordChannel } from '../../src/channels/discord';
 import { TelegramChannel } from '../../src/channels/telegram';
 import { PagerDutyChannel } from '../../src/channels/pagerduty';
 import { OpsgenieChannel } from '../../src/channels/opsgenie';
@@ -100,6 +101,59 @@ describe('Teams', () => {
     const r = { ...rendered(), logExcerpt: ['<script>alert(1)</script>'] };
     await new TeamsChannel('t', `${base}/hook`).send(alert, r);
     expect(JSON.stringify(last!.body)).toContain('&lt;script&gt;');
+  });
+});
+
+describe('Discord', () => {
+  it('posts an embed with an integer colour and the fields', async () => {
+    await new DiscordChannel('d', `${base}/hook`).send(alert, rendered());
+    const e = last!.body.embeds[0];
+    expect(e.color).toBe(0xdc2626);
+    expect(e.title).toBe('api crashed (instance 3)');
+    expect(e.fields.map((f: any) => f.name)).toContain('app');
+    expect(e.description).toContain('Error: boom');
+  });
+
+  it('switches to green when resolved', async () => {
+    await new DiscordChannel('d', `${base}/hook`).send(alert, rendered(true));
+    expect(last!.body.embeds[0].color).toBe(0x16a34a);
+  });
+
+  it('never lets a log line mention anyone', async () => {
+    const r = { ...rendered(), logExcerpt: ['@everyone the build is broken'] };
+    await new DiscordChannel('d', `${base}/hook`).send(alert, r);
+    expect(last!.body.allowed_mentions).toEqual({ parse: [] });
+  });
+
+  it('keeps the code fence intact when the log contains one', async () => {
+    const r = { ...rendered(), logExcerpt: ['before ``` after'] };
+    await new DiscordChannel('d', `${base}/hook`).send(alert, r);
+    const d = last!.body.embeds[0].description as string;
+    // Exactly the opening and closing fence we wrote, and no third one from the log.
+    expect(d.match(/```/g)).toHaveLength(2);
+    expect(d).toContain('after');
+  });
+
+  it('clamps every value Discord would reject with a 400', async () => {
+    const r: RenderedAlert = {
+      title: 'x'.repeat(400),
+      text: '',
+      fields: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`f${i}`, 'y'.repeat(2000)])),
+      logExcerpt: ['z'.repeat(9000)],
+      resolved: false,
+    };
+    await new DiscordChannel('d', `${base}/hook`, 'u'.repeat(200)).send(alert, r);
+    const e = last!.body.embeds[0];
+    expect(e.title).toHaveLength(256);
+    expect(e.fields).toHaveLength(25);
+    expect(e.fields[0].value).toHaveLength(1024);
+    expect((e.description as string).length).toBeLessThanOrEqual(4096);
+    expect(last!.body.username).toHaveLength(80);
+  });
+
+  it('omits the username unless one is configured', async () => {
+    await new DiscordChannel('d', `${base}/hook`).send(alert, rendered());
+    expect(last!.body.username).toBeUndefined();
   });
 });
 
