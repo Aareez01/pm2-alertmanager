@@ -11,11 +11,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 22 (Jod), 24 (Krypton) and 26 (Lithium) are the live LTS lines. 18 and 20
-        # are past end-of-life but still common on older hosts, and `engines` claims
-        # them, so they are tested rather than merely asserted. 27 is alpha and is not
-        # a support target.
-        node: ['18', '20', '22', '24', '26']
+        # 22 (Jod), 24 (Krypton) and 26 (Lithium) are the live LTS lines, and every
+        # one of them is tested rather than merely asserted. 18 and 20 are past
+        # end-of-life and are no longer supported: the test runner cannot execute on
+        # them, and claiming a version we cannot run is worse than not claiming it.
+        # 27 is alpha and is not a support target.
+        node: ['22', '24', '26']
 
     steps:
       - uses: actions/checkout@v4
