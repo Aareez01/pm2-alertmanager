@@ -15,7 +15,7 @@ const slackChannel = z.object({
 const webhookChannel = z.object({
   type: z.literal('webhook'),
   url: z.string().min(1),
-  headers: z.record(z.string()).default({}),
+  headers: z.record(z.string(), z.string()).default({}),
   /** Optional JSON template with {{app}}, {{title}}, {{severity}} etc. */
   template: z.string().nullable().default(null),
   timeoutMs: z.number().int().positive().default(10_000),
@@ -57,7 +57,7 @@ const smtpChannel = z.object({
   user: z.string().optional(),
   pass: z.string().optional(),
   from: z.string().min(1),
-  to: z.array(z.string().min(1)).min(1),
+  to: z.array(z.string().min(1)).min(1).max(100),
 });
 
 const channel = z.discriminatedUnion('type', [
@@ -70,9 +70,9 @@ const route = z.object({
     app: z.string().optional(),
     namespace: z.string().optional(),
     severity: severity.optional(),
-    condition: z.array(condition).optional(),
-  }).default({}),
-  channels: z.array(z.string().min(1)).min(1),
+    condition: z.array(condition).max(50).optional(),
+  }).prefault({}),
+  channels: z.array(z.string().min(1)).min(1).max(50),
 });
 
 const quietHours = z.object({
@@ -81,7 +81,7 @@ const quietHours = z.object({
   endHour: z.number().int().min(0).max(23).default(7),
   timezone: z.string().default('UTC'),
   alwaysSend: severity.default('critical'),
-}).default({});
+}).prefault({});
 
 export const configSchema = z.object({
   logLevel: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -96,7 +96,7 @@ export const configSchema = z.object({
     restartWindowSeconds: z.number().positive().default(30),
     crashLoopThreshold: z.number().int().positive().default(3),
     crashLoopWindowSeconds: z.number().positive().default(60),
-  }).default({}),
+  }).prefault({}),
 
   suppression: z.object({
     /** Events inside this window collapse into one notification. */
@@ -107,13 +107,13 @@ export const configSchema = z.object({
     flapWindowSeconds: z.number().positive().default(600),
     minSeverity: severity.default('warning'),
     quietHours,
-  }).default({}),
+  }).prefault({}),
 
   delivery: z.object({
     attempts: z.number().int().positive().max(10).default(3),
     baseBackoffMs: z.number().int().positive().default(1000),
     ratePerMinute: z.number().int().positive().default(20),
-  }).default({}),
+  }).prefault({}),
 
   /**
    * Detecting memory-triggered restarts requires reading PM2's own daemon log, because
@@ -123,7 +123,7 @@ export const configSchema = z.object({
     enabled: z.boolean().default(false),
     pm2LogPath: z.string().default(''),
     pollSeconds: z.number().positive().default(5),
-  }).default({}),
+  }).prefault({}),
 
   content: z.object({
     logLines: z.number().int().min(0).max(100).default(15),
@@ -132,11 +132,11 @@ export const configSchema = z.object({
       name: z.string(),
       pattern: z.string(),
       replacement: z.string().default('[redacted]'),
-    })).default([]),
-  }).default({}),
+    })).max(100).default([]),
+  }).prefault({}),
 
-  channels: z.record(channel).default({}),
-  routes: z.array(route).default([]),
+  channels: z.record(z.string(), channel).default({}),
+  routes: z.array(route).max(500).default([]),
 });
 
 export type AlertmanagerConfig = z.infer<typeof configSchema>;
