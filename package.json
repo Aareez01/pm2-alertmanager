@@ -44,7 +44,8 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run test/unit"
+    "test": "vitest run test/unit",
+    "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
     "js-yaml": "^4.1.0",
@@ -76,5 +77,10 @@
   "bugs": {
     "url": "https://github.com/Aareez01/pm2-alertmanager/issues"
   },
-  "homepage": "https://github.com/Aareez01/pm2-alertmanager#readme"
+  "homepage": "https://github.com/Aareez01/pm2-alertmanager#readme",
+  "author": "Aareez01",
+  "publishConfig": {
+    "access": "public"
+  },
+  "types": "dist/index.d.ts"
 }
