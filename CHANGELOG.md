@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.1] - 2026-11-04
+
+### Changed
+
+- The README now links to the rest of the suite. README ships in the tarball, so this
+  is a real change to the published package rather than a repository-only one.
+
+### Build
+
+- **Published from CI with provenance**, via npm trusted publishing, rather than from a
+  workstation. Earlier versions carry no attestation: the signatures npm attaches are
+  applied after upload and prove only that registry storage did not alter the file, not
+  where it came from. This is the first release that can be traced back to the commit it
+  was built from. Authentication is a short-lived OIDC exchange, so no publish token
+  exists in the repository.
+
 ## [0.2.0] - 2026-11-04
 
 ### Added
